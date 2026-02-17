@@ -5,6 +5,8 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any
 
+from sqlalchemy.ext.asyncio import AsyncSession
+
 from covenant.core.executive import Action, ExecutiveController
 from covenant.core.reflection import micro_reflect
 from covenant.core.safety import SafetyGate
@@ -27,14 +29,25 @@ class AgentLoop:
         llm_client: Any = None,
         retriever: Any = None,
         tool_router: Any = None,
+        session: AsyncSession | None = None,
     ):
         self.llm_client = llm_client
-        self.retriever = retriever
+        self.session = session
         self.tool_router = tool_router
         self.executive = executive or ExecutiveController(llm_client=llm_client)
         self.safety = safety or SafetyGate()
         self.wm = WorkingMemory()
         self.history: list[StepResult] = []
+
+        # Auto-wire retriever from DB session when none provided
+        if retriever is not None:
+            self.retriever = retriever
+        elif session is not None:
+            from covenant.memory.retrieval import MemoryRetriever
+
+            self.retriever = MemoryRetriever(session)
+        else:
+            self.retriever = None
 
     async def step(self, user_input: str | None = None) -> StepResult:
         """Execute one iteration: Ingest -> Update WM -> Retrieve -> Decide -> Safety -> Execute -> Reflect."""
@@ -66,7 +79,13 @@ class AgentLoop:
         # 6. Execute
         output = await self._execute(decision)
 
-        # 7. Write memory (placeholder - stores episode in Phase 1 DB)
+        # 7. Write memory
+        await self._write_episode(
+            goal=self.wm.goal or "",
+            observation=f"user: {user_input}" if user_input else "",
+            action=decision.action.value,
+            outcome=output,
+        )
 
         # 8. Reflect
         observation = f"action={decision.action.value} output={output}"
@@ -116,3 +135,20 @@ class AgentLoop:
             return decision.payload.get("text", "")
 
         return f"executed {decision.action.value}"
+
+    async def _write_episode(
+        self, goal: str, observation: str, action: str, outcome: str
+    ) -> None:
+        if self.session is None:
+            return
+        from covenant.memory.repository import MemoryRepository
+
+        repo = MemoryRepository(self.session)
+        await repo.add_episode(
+            goal=goal,
+            observation=observation,
+            action=action,
+            outcome=outcome,
+            salience=0.5,
+        )
+        await self.session.commit()

@@ -231,8 +231,23 @@ class CovenantREPL:
             completer=_make_completer(),
             style=INPUT_STYLE,
         )
+        self._session_factory: Any = None
+        self._db_session: Any = None
 
-    def _create_agent(self) -> AgentLoop:
+    async def _init_memory(self) -> None:
+        """Initialize DB for persistent memory. Falls back to volatile on failure."""
+        try:
+            from covenant.config import get_settings
+            from covenant.memory.database import get_session_factory
+            from covenant.memory.database import init_db as _init_db
+
+            settings = get_settings()
+            await _init_db(settings)
+            self._session_factory = get_session_factory()
+        except Exception:
+            self._session_factory = None
+
+    async def _create_agent(self) -> AgentLoop:
         loop_kwargs: dict[str, Any] = {}
         if self._llm:
             from covenant.config import get_settings
@@ -240,9 +255,20 @@ class CovenantREPL:
 
             settings = get_settings()
             loop_kwargs["llm_client"] = get_llm_client(settings)
+
+        if self._session_factory is not None:
+            self._db_session = self._session_factory()
+            await self._db_session.__aenter__()
+            loop_kwargs["session"] = self._db_session
+
         return AgentLoop(**loop_kwargs)
 
-    def _handle_command(self, cmd: str) -> bool:
+    async def _cleanup_db_session(self) -> None:
+        if self._db_session is not None:
+            await self._db_session.__aexit__(None, None, None)
+            self._db_session = None
+
+    async def _handle_command(self, cmd: str) -> bool:
         """Handle a command. Returns True if the REPL should exit."""
         cmd = cmd.strip().lower()
 
@@ -271,6 +297,7 @@ class CovenantREPL:
             return False
 
         if cmd == "/reset":
+            await self._cleanup_db_session()
             self._agent = None
             console.print("  [dim]◉ neural pathways reset[/dim]")
             return False
@@ -280,7 +307,7 @@ class CovenantREPL:
 
     async def _run_agent_turn(self, user_input: str) -> list[StepResult]:
         if self._agent is None:
-            self._agent = self._create_agent()
+            self._agent = await self._create_agent()
 
         results: list[StepResult] = []
 
@@ -300,6 +327,7 @@ class CovenantREPL:
 
     async def run(self) -> None:
         """Main async REPL loop."""
+        await self._init_memory()
         _print_banner()
 
         prompt_text = FormattedText(
@@ -309,40 +337,47 @@ class CovenantREPL:
             ]
         )
 
-        while True:
-            try:
-                user_input = await self._session.prompt_async(prompt_text)
-            except (EOFError, KeyboardInterrupt):
-                console.print("\n  [dim]◉ disconnecting from cortex...[/dim]")
-                console.print()
-                break
-
-            user_input = user_input.strip()
-            if not user_input:
-                continue
-
-            # Exit words (bare or slash)
-            if user_input.lower() in EXIT_WORDS:
-                console.print("  [dim]◉ disconnecting from cortex...[/dim]")
-                console.print()
-                break
-
-            # Slash commands
-            if user_input.startswith("/"):
-                should_exit = self._handle_command(user_input)
-                if should_exit:
+        try:
+            while True:
+                try:
+                    user_input = await self._session.prompt_async(prompt_text)
+                except (EOFError, KeyboardInterrupt):
+                    console.print("\n  [dim]◉ disconnecting from cortex...[/dim]")
+                    console.print()
                     break
-                continue
 
-            # Agent turn
-            try:
-                results = await self._run_agent_turn(user_input)
-                for r in results:
-                    _display_result(r)
-            except Exception as exc:
-                console.print(f"  [err]⚠ error:[/err] {exc}")
+                user_input = user_input.strip()
+                if not user_input:
+                    continue
 
-            console.print()  # breathing room between turns
+                # Exit words (bare or slash)
+                if user_input.lower() in EXIT_WORDS:
+                    console.print("  [dim]◉ disconnecting from cortex...[/dim]")
+                    console.print()
+                    break
+
+                # Slash commands
+                if user_input.startswith("/"):
+                    should_exit = await self._handle_command(user_input)
+                    if should_exit:
+                        break
+                    continue
+
+                # Agent turn
+                try:
+                    results = await self._run_agent_turn(user_input)
+                    for r in results:
+                        _display_result(r)
+                except Exception as exc:
+                    console.print(f"  [err]⚠ error:[/err] {exc}")
+
+                console.print()  # breathing room between turns
+        finally:
+            await self._cleanup_db_session()
+            if self._session_factory is not None:
+                from covenant.memory.database import close_db
+
+                await close_db()
 
 
 def start_repl(llm: bool = False, max_steps: int = 10) -> None:

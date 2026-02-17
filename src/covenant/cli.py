@@ -43,25 +43,45 @@ def init_db():
 @main.command()
 @click.argument("goal")
 @click.option("--llm/--no-llm", default=False, help="Use LLM for decision-making.")
+@click.option("--memory/--no-memory", default=True, help="Enable persistent memory.")
 @click.option("--max-steps", default=10, help="Max agent loop steps.")
-def run(goal: str, llm: bool, max_steps: int):
+def run(goal: str, llm: bool, memory: bool, max_steps: int):
     """Run the agent on a goal."""
     from covenant.core.agent_loop import AgentLoop
 
     async def _run():
-        loop_kwargs = {}
+        loop_kwargs: dict = {}
         if llm:
             from covenant.config import get_settings
             from covenant.llm.client import get_llm_client
 
             settings = get_settings()
             loop_kwargs["llm_client"] = get_llm_client(settings)
-        agent = AgentLoop(**loop_kwargs)
-        results = await agent.run(goal, max_steps=max_steps)
-        for r in results:
-            status = " [BLOCKED]" if r.blocked else ""
-            text = r.payload.get("text", r.action.value)
-            click.echo(f"[{r.action.value}]{status} {text}")
+
+        session = None
+        if memory:
+            from covenant.config import get_settings
+            from covenant.memory.database import close_db, get_session_factory
+            from covenant.memory.database import init_db as _init_db
+
+            settings = get_settings()
+            await _init_db(settings)
+            session_factory = get_session_factory()
+            session = session_factory()
+            await session.__aenter__()
+            loop_kwargs["session"] = session
+
+        try:
+            agent = AgentLoop(**loop_kwargs)
+            results = await agent.run(goal, max_steps=max_steps)
+            for r in results:
+                status = " [BLOCKED]" if r.blocked else ""
+                text = r.payload.get("text", r.action.value)
+                click.echo(f"[{r.action.value}]{status} {text}")
+        finally:
+            if session is not None:
+                await session.__aexit__(None, None, None)
+                await close_db()
 
     asyncio.run(_run())
 

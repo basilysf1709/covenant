@@ -102,59 +102,70 @@ class TestCommands:
     def setup_method(self):
         self.repl = CovenantREPL(llm=False, max_steps=5)
 
-    def test_quit_returns_true(self):
-        assert self.repl._handle_command("/quit") is True
+    @pytest.mark.asyncio
+    async def test_quit_returns_true(self):
+        assert await self.repl._handle_command("/quit") is True
 
-    def test_exit_returns_true(self):
-        assert self.repl._handle_command("/exit") is True
+    @pytest.mark.asyncio
+    async def test_exit_returns_true(self):
+        assert await self.repl._handle_command("/exit") is True
 
-    def test_bare_exit_returns_true(self):
-        assert self.repl._handle_command("exit") is True
+    @pytest.mark.asyncio
+    async def test_bare_exit_returns_true(self):
+        assert await self.repl._handle_command("exit") is True
 
-    def test_bare_quit_returns_true(self):
-        assert self.repl._handle_command("quit") is True
+    @pytest.mark.asyncio
+    async def test_bare_quit_returns_true(self):
+        assert await self.repl._handle_command("quit") is True
 
-    def test_help_returns_false(self, capsys):
-        assert self.repl._handle_command("/help") is False
+    @pytest.mark.asyncio
+    async def test_help_returns_false(self, capsys):
+        assert await self.repl._handle_command("/help") is False
         captured = capsys.readouterr()
         assert "/help" in captured.out
 
-    def test_clear_without_agent(self, capsys):
-        assert self.repl._handle_command("/clear") is False
+    @pytest.mark.asyncio
+    async def test_clear_without_agent(self, capsys):
+        assert await self.repl._handle_command("/clear") is False
         captured = capsys.readouterr()
         assert "cleared" in captured.out.lower()
 
-    def test_clear_with_agent(self):
+    @pytest.mark.asyncio
+    async def test_clear_with_agent(self):
         self.repl._agent = AgentLoop()
         self.repl._agent.history.append(
             StepResult(action=Action.RESPOND, payload={"text": "hi"})
         )
-        assert self.repl._handle_command("/clear") is False
+        assert await self.repl._handle_command("/clear") is False
         assert len(self.repl._agent.history) == 0
 
-    def test_status_no_agent(self, capsys):
-        assert self.repl._handle_command("/status") is False
+    @pytest.mark.asyncio
+    async def test_status_no_agent(self, capsys):
+        assert await self.repl._handle_command("/status") is False
         captured = capsys.readouterr()
         assert "No active cortex" in captured.out
 
-    def test_status_with_agent(self, capsys):
+    @pytest.mark.asyncio
+    async def test_status_with_agent(self, capsys):
         self.repl._agent = AgentLoop()
         self.repl._agent.wm.goal = "test goal"
         self.repl._agent.wm.budget = 5
-        assert self.repl._handle_command("/status") is False
+        assert await self.repl._handle_command("/status") is False
         captured = capsys.readouterr()
         assert "test goal" in captured.out
         assert "5" in captured.out
 
-    def test_reset_clears_agent(self, capsys):
+    @pytest.mark.asyncio
+    async def test_reset_clears_agent(self, capsys):
         self.repl._agent = AgentLoop()
-        assert self.repl._handle_command("/reset") is False
+        assert await self.repl._handle_command("/reset") is False
         assert self.repl._agent is None
         captured = capsys.readouterr()
         assert "reset" in captured.out.lower()
 
-    def test_unknown_command(self, capsys):
-        assert self.repl._handle_command("/foo") is False
+    @pytest.mark.asyncio
+    async def test_unknown_command(self, capsys):
+        assert await self.repl._handle_command("/foo") is False
         captured = capsys.readouterr()
         assert "unknown command" in captured.out.lower()
 

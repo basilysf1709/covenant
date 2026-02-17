@@ -66,3 +66,30 @@ async def test_custom_agent_factory():
     scenario = Scenario(name="test", goal="hi", expected_actions=["respond"], max_steps=2)
     await harness.run_scenario(scenario)
     assert factory_called
+
+
+async def test_eval_with_memory_agent(db_session):
+    """Eval harness works with a memory-enabled agent factory."""
+    from covenant.core.agent_loop import AgentLoop
+
+    def memory_factory():
+        return AgentLoop(session=db_session)
+
+    harness = EvalHarness(agent_factory=memory_factory)
+    scenario = Scenario(
+        name="memory_persistence",
+        goal="Remember that the project deadline is Friday",
+        expected_actions=["respond", "stop"],
+        max_steps=3,
+    )
+    result = await harness.run_scenario(scenario)
+    assert len(result.steps) >= 1
+
+    # Verify episodes were actually written to the DB
+    from sqlalchemy import select
+
+    from covenant.memory.models import Episode
+
+    db_result = await db_session.execute(select(Episode))
+    episodes = db_result.scalars().all()
+    assert len(episodes) >= 1

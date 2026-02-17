@@ -38,4 +38,11 @@ SCENARIOS = [
         success_criteria="Agent produces multiple steps with at least one respond",
         max_steps=5,
     ),
+    Scenario(
+        name="memory_persistence",
+        goal="Remember that the project deadline is Friday",
+        expected_actions=["respond", "stop"],
+        success_criteria="Agent processes the memory request and responds or stops",
+        max_steps=3,
+    ),
 ]
