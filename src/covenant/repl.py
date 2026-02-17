@@ -1,4 +1,4 @@
-"""Interactive REPL for Covenant agent."""
+"""Interactive REPL for Covenant agent — Neural Interface TUI."""
 
 from __future__ import annotations
 
@@ -11,83 +11,114 @@ from prompt_toolkit import PromptSession
 from prompt_toolkit.completion import WordCompleter
 from prompt_toolkit.formatted_text import FormattedText
 from prompt_toolkit.styles import Style
+from rich.console import Console
+from rich.panel import Panel
+from rich.text import Text
+from rich.theme import Theme
 
 from covenant import __version__
 from covenant.core.agent_loop import AgentLoop, StepResult
 from covenant.core.executive import Action
 
-REPL_STYLE = Style.from_dict(
+# ── Neural color palette ──────────────────────────────────────────────────────
+
+NEURAL_THEME = Theme(
     {
-        "prompt": "bold ansigreen",
-        "response": "ansiwhite",
-        "tool": "ansiblue",
-        "error": "bold ansired",
-        "info": "ansicyan",
+        "cortex": "bold magenta",
+        "synapse": "cyan",
+        "signal": "bold yellow",
+        "dendrite": "dim white",
+        "axon": "bright_white",
+        "err": "bold red",
+        "dim": "dim",
+        "status.key": "bold cyan",
+        "status.val": "white",
     }
 )
 
-SLASH_COMMANDS: dict[str, str] = {
+console = Console(theme=NEURAL_THEME, highlight=False)
+
+# prompt-toolkit style for the input line
+INPUT_STYLE = Style.from_dict(
+    {
+        "prompt_glyph": "fg:ansimagenta bold",
+        "prompt_sep": "fg:ansimagenta",
+    }
+)
+
+# ── Commands ──────────────────────────────────────────────────────────────────
+
+COMMANDS: dict[str, str] = {
     "/help": "Show available commands",
     "/clear": "Clear conversation history",
-    "/quit": "Exit the REPL",
-    "/status": "Show agent working memory",
-    "/reset": "Reset the agent to a fresh state",
+    "/status": "Show cortex state",
+    "/reset": "Reset neural pathways",
+    "/quit": "Disconnect",
+    "/exit": "Disconnect",
 }
 
-
-def make_completer() -> WordCompleter:
-    """Create a WordCompleter for slash commands."""
-    return WordCompleter(list(SLASH_COMMANDS.keys()), sentence=True)
+EXIT_WORDS = frozenset({"exit", "quit", "/exit", "/quit"})
 
 
-def format_step_result(result: StepResult) -> tuple[str, str]:
-    """Format a StepResult into (text, style_class) for display."""
-    if result.blocked:
-        reason = result.block_reason or "blocked by safety gate"
-        return (f"[BLOCKED] {reason}", "class:error")
-
-    action = result.action
-
-    if action == Action.RESPOND:
-        text = result.payload.get("text", "")
-        return (text, "class:response")
-
-    if action == Action.ASK:
-        text = result.payload.get("text", "")
-        return (f"? {text}", "class:info")
-
-    if action == Action.TOOL:
-        tool = result.payload.get("tool", "unknown")
-        args = result.payload.get("args", {})
-        return (f"[tool: {tool}] {args}", "class:tool")
-
-    if action == Action.STOP:
-        return ("Agent stopped.", "class:info")
-
-    # REFLECT, RETRIEVE_MORE, etc.
-    return (f"[{action.value}]", "class:info")
+def _make_completer() -> WordCompleter:
+    words = list(COMMANDS.keys()) + ["exit", "quit"]
+    return WordCompleter(words, sentence=True)
 
 
-class ThinkingSpinner:
-    """Async context manager that shows a braille spinner on stderr."""
+# ── Banner ────────────────────────────────────────────────────────────────────
 
-    FRAMES = "⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏"
+BANNER = """\
+[dim]  ┌──────────────────────────────────────────┐[/dim]
+[dim]  │[/dim] [cortex]  ◉◉◉[/cortex]   [bold bright_white]C O V E N A N T[/bold bright_white]   [cortex]◉◉◉[/cortex]  [dim]│[/dim]
+[dim]  │[/dim] [synapse]    ∿∿  neural  interface  ∿∿[/synapse]    [dim]│[/dim]
+[dim]  │[/dim] [dim]            v{version}[/dim]              [dim]│[/dim]
+[dim]  └──────────────────────────────────────────┘[/dim]"""
 
-    def __init__(self, message: str = "thinking..."):
-        self._message = message
+HELP_TEXT = """\
+[dim]  Type naturally. Say [/dim][signal]exit[/signal][dim] or [/dim][signal]quit[/signal][dim] to disconnect.[/dim]
+[dim]  Press [/dim][signal]Ctrl+D[/signal][dim] or [/dim][signal]Ctrl+C[/signal][dim] also works.[/dim]"""
+
+
+def _print_banner() -> None:
+    console.print()
+    console.print(BANNER.format(version=__version__))
+    console.print(HELP_TEXT)
+    console.print()
+
+
+# ── Neural pulse spinner ─────────────────────────────────────────────────────
+
+PULSE_FRAMES = [
+    "\x1b[35m◉\x1b[0m \x1b[90m○ ○ ○ ○\x1b[0m",
+    "\x1b[90m○\x1b[0m \x1b[35m◉\x1b[0m \x1b[90m○ ○ ○\x1b[0m",
+    "\x1b[90m○ ○\x1b[0m \x1b[35m◉\x1b[0m \x1b[90m○ ○\x1b[0m",
+    "\x1b[90m○ ○ ○\x1b[0m \x1b[35m◉\x1b[0m \x1b[90m○\x1b[0m",
+    "\x1b[90m○ ○ ○ ○\x1b[0m \x1b[35m◉\x1b[0m",
+    "\x1b[90m○ ○ ○\x1b[0m \x1b[36m◉\x1b[0m \x1b[90m○\x1b[0m",
+    "\x1b[90m○ ○\x1b[0m \x1b[36m◉\x1b[0m \x1b[90m○ ○\x1b[0m",
+    "\x1b[90m○\x1b[0m \x1b[36m◉\x1b[0m \x1b[90m○ ○ ○\x1b[0m",
+]
+
+
+class NeuralSpinner:
+    """Async context manager — neural pulse animation on stderr."""
+
+    def __init__(self, label: str = "cortex processing"):
+        self._label = label
         self._task: asyncio.Task[None] | None = None
 
     async def _spin(self) -> None:
         try:
-            for frame in itertools.cycle(self.FRAMES):
-                sys.stderr.write(f"\r  {frame} {self._message}")
+            for frame in itertools.cycle(PULSE_FRAMES):
+                sys.stderr.write(f"\r  {frame}  \x1b[90m{self._label}\x1b[0m")
                 sys.stderr.flush()
-                await asyncio.sleep(0.08)
+                await asyncio.sleep(0.1)
         except asyncio.CancelledError:
-            sys.stderr.write("\r" + " " * (len(self._message) + 6) + "\r")
+            # clear the line
+            sys.stderr.write("\r" + " " * (len(self._label) + 30) + "\r")
             sys.stderr.flush()
 
-    async def __aenter__(self) -> ThinkingSpinner:
+    async def __aenter__(self) -> NeuralSpinner:
         self._task = asyncio.create_task(self._spin())
         return self
 
@@ -100,20 +131,108 @@ class ThinkingSpinner:
                 pass
 
 
+# ── Output formatting ─────────────────────────────────────────────────────────
+
+_RESPONSE_BORDER = "\x1b[35m│\x1b[0m"
+
+
+def _display_result(result: StepResult) -> None:
+    """Render a StepResult with brain-themed formatting."""
+    if result.blocked:
+        reason = result.block_reason or "blocked by safety gate"
+        console.print(
+            Panel(
+                f"[err]{reason}[/err]",
+                title="[err]⚠ BLOCKED[/err]",
+                border_style="red",
+                padding=(0, 1),
+            )
+        )
+        return
+
+    action = result.action
+
+    if action == Action.RESPOND:
+        text = result.payload.get("text", "")
+        if text:
+            console.print(
+                Panel(
+                    text,
+                    border_style="magenta",
+                    padding=(0, 2),
+                )
+            )
+        return
+
+    if action == Action.ASK:
+        text = result.payload.get("text", "")
+        console.print(
+            Panel(
+                f"[signal]?[/signal] {text}",
+                border_style="yellow",
+                padding=(0, 2),
+            )
+        )
+        return
+
+    if action == Action.TOOL:
+        tool = result.payload.get("tool", "?")
+        args = result.payload.get("args", {})
+        console.print(f"  [synapse]⚡ tool:[/synapse] [axon]{tool}[/axon] [dim]{args}[/dim]")
+        return
+
+    if action == Action.STOP:
+        console.print("  [dim]◉ session ended[/dim]")
+        return
+
+    # REFLECT, RETRIEVE_MORE, etc.
+    console.print(f"  [dim]∿ {action.value}[/dim]")
+
+
+# ── Status display ────────────────────────────────────────────────────────────
+
+
+def _display_status(agent: AgentLoop | None) -> None:
+    if agent is None:
+        console.print("  [dim]No active cortex.[/dim]")
+        return
+
+    wm = agent.wm
+    status = Text()
+    status.append("  ◉ Goal     ", style="status.key")
+    status.append(f"{wm.goal or '—'}\n", style="status.val")
+    status.append("  ◉ State    ", style="status.key")
+    status.append(f"{wm.state.value}\n", style="status.val")
+    status.append("  ◉ Budget   ", style="status.key")
+    status.append(f"{wm.budget}\n", style="status.val")
+    if wm.plan:
+        status.append("  ◉ Plan     ", style="status.key")
+        status.append(f"{wm.plan}\n", style="status.val")
+    obs_count = len(wm.recent_observations)
+    status.append("  ◉ Signals  ", style="status.key")
+    status.append(f"{obs_count} observation(s)", style="status.val")
+
+    console.print(
+        Panel(status, title="[cortex]cortex state[/cortex]", border_style="magenta", padding=(0, 1))
+    )
+
+
+# ── REPL ──────────────────────────────────────────────────────────────────────
+
+
 class CovenantREPL:
-    """Interactive REPL for the Covenant agent."""
+    """Interactive neural interface for the Covenant agent."""
 
     def __init__(self, llm: bool = False, max_steps: int = 10):
         self._llm = llm
         self._max_steps = max_steps
         self._agent: AgentLoop | None = None
         self._session = PromptSession(
-            completer=make_completer(),
-            style=REPL_STYLE,
+            completer=_make_completer(),
+            style=INPUT_STYLE,
         )
 
     def _create_agent(self) -> AgentLoop:
-        """Create a fresh AgentLoop instance."""
         loop_kwargs: dict[str, Any] = {}
         if self._llm:
             from covenant.config import get_settings
@@ -123,74 +242,57 @@ class CovenantREPL:
             loop_kwargs["llm_client"] = get_llm_client(settings)
         return AgentLoop(**loop_kwargs)
 
-    def _print_styled(self, text: str, style_class: str) -> None:
-        """Print styled output via prompt-toolkit."""
-        from prompt_toolkit import print_formatted_text
-
-        print_formatted_text(
-            FormattedText([(style_class, text)]),
-            style=REPL_STYLE,
-        )
-
-    def _handle_slash_command(self, cmd: str) -> bool:
-        """Handle a slash command. Returns True if the REPL should exit."""
+    def _handle_command(self, cmd: str) -> bool:
+        """Handle a command. Returns True if the REPL should exit."""
         cmd = cmd.strip().lower()
 
-        if cmd == "/quit":
-            self._print_styled("Goodbye!", "class:info")
+        if cmd in EXIT_WORDS:
+            console.print("  [dim]◉ disconnecting from cortex...[/dim]")
+            console.print()
             return True
 
         if cmd == "/help":
-            self._print_styled("Commands:", "class:info")
-            for name, desc in SLASH_COMMANDS.items():
-                self._print_styled(f"  {name:<10} {desc}", "class:info")
+            console.print()
+            for name, desc in COMMANDS.items():
+                console.print(f"  [synapse]{name:<10}[/synapse] [dim]{desc}[/dim]")
+            console.print(f"  [signal]{'exit':<10}[/signal] [dim]Disconnect[/dim]")
+            console.print(f"  [signal]{'quit':<10}[/signal] [dim]Disconnect[/dim]")
+            console.print()
             return False
 
         if cmd == "/clear":
             if self._agent is not None:
                 self._agent.history.clear()
-            self._print_styled("History cleared.", "class:info")
+            console.print("  [dim]◉ signals cleared[/dim]")
             return False
 
         if cmd == "/status":
-            if self._agent is None:
-                self._print_styled("No active agent.", "class:info")
-            else:
-                wm = self._agent.wm
-                self._print_styled("Working Memory:", "class:info")
-                self._print_styled(f"  Goal:    {wm.goal or '(none)'}", "class:info")
-                self._print_styled(f"  State:   {wm.state.value}", "class:info")
-                self._print_styled(f"  Budget:  {wm.budget}", "class:info")
-                if wm.plan:
-                    self._print_styled(f"  Plan:    {wm.plan}", "class:info")
+            _display_status(self._agent)
             return False
 
         if cmd == "/reset":
             self._agent = None
-            self._print_styled("Agent reset.", "class:info")
+            console.print("  [dim]◉ neural pathways reset[/dim]")
             return False
 
-        self._print_styled(f"Unknown command: {cmd}", "class:error")
+        console.print(f"  [err]unknown command:[/err] {cmd}")
         return False
 
     async def _run_agent_turn(self, user_input: str) -> list[StepResult]:
-        """Run agent steps until RESPOND, ASK, STOP, or max steps."""
         if self._agent is None:
             self._agent = self._create_agent()
 
         results: list[StepResult] = []
 
-        # First step with user input
-        async with ThinkingSpinner():
+        async with NeuralSpinner():
             result = await self._agent.step(user_input)
         results.append(result)
 
-        # Continue stepping until terminal action or budget
         terminal = {Action.RESPOND, Action.ASK, Action.STOP}
         for _ in range(self._max_steps - 1):
             if result.action in terminal or result.blocked:
                 break
-            async with ThinkingSpinner():
+            async with NeuralSpinner():
                 result = await self._agent.step()
             results.append(result)
 
@@ -198,47 +300,49 @@ class CovenantREPL:
 
     async def run(self) -> None:
         """Main async REPL loop."""
-        self._print_styled(
-            f"Covenant v{__version__} - Interactive Mode",
-            "class:info",
+        _print_banner()
+
+        prompt_text = FormattedText(
+            [
+                ("class:prompt_glyph", "◉ "),
+                ("class:prompt_sep", "› "),
+            ]
         )
-        self._print_styled(
-            "Type a message to chat with the agent. Use /help for commands.",
-            "class:info",
-        )
-        print()  # blank line
 
         while True:
             try:
-                user_input = await self._session.prompt_async(
-                    FormattedText([("class:prompt", "covenant> ")]),
-                )
+                user_input = await self._session.prompt_async(prompt_text)
             except (EOFError, KeyboardInterrupt):
-                self._print_styled("\nGoodbye!", "class:info")
+                console.print("\n  [dim]◉ disconnecting from cortex...[/dim]")
+                console.print()
                 break
 
             user_input = user_input.strip()
             if not user_input:
                 continue
 
+            # Exit words (bare or slash)
+            if user_input.lower() in EXIT_WORDS:
+                console.print("  [dim]◉ disconnecting from cortex...[/dim]")
+                console.print()
+                break
+
             # Slash commands
             if user_input.startswith("/"):
-                should_exit = self._handle_slash_command(user_input)
+                should_exit = self._handle_command(user_input)
                 if should_exit:
                     break
                 continue
 
-            # Run agent
+            # Agent turn
             try:
                 results = await self._run_agent_turn(user_input)
                 for r in results:
-                    text, style = format_step_result(r)
-                    if text:
-                        self._print_styled(text, style)
+                    _display_result(r)
             except Exception as exc:
-                self._print_styled(f"Error: {exc}", "class:error")
+                console.print(f"  [err]⚠ error:[/err] {exc}")
 
-            print()  # blank line between turns
+            console.print()  # breathing room between turns
 
 
 def start_repl(llm: bool = False, max_steps: int = 10) -> None:

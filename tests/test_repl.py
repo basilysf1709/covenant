@@ -9,145 +9,154 @@ import pytest
 from covenant.core.agent_loop import AgentLoop, StepResult
 from covenant.core.executive import Action
 from covenant.repl import (
-    SLASH_COMMANDS,
+    COMMANDS,
+    EXIT_WORDS,
     CovenantREPL,
-    format_step_result,
-    make_completer,
+    _display_result,
+    _make_completer,
     start_repl,
 )
 
 
-# --- Unit tests: format_step_result ---
+# --- Unit tests: _display_result ---
 
 
-class TestFormatStepResult:
-    def test_respond_action(self):
+class TestDisplayResult:
+    def test_respond_action(self, capsys):
         result = StepResult(action=Action.RESPOND, payload={"text": "Hello!"})
-        text, style = format_step_result(result)
-        assert text == "Hello!"
-        assert style == "class:response"
+        _display_result(result)
+        captured = capsys.readouterr()
+        assert "Hello!" in captured.out
 
-    def test_ask_action(self):
+    def test_ask_action(self, capsys):
         result = StepResult(action=Action.ASK, payload={"text": "What next?"})
-        text, style = format_step_result(result)
-        assert text == "? What next?"
-        assert style == "class:info"
+        _display_result(result)
+        captured = capsys.readouterr()
+        assert "What next?" in captured.out
 
-    def test_tool_action(self):
+    def test_tool_action(self, capsys):
         result = StepResult(
             action=Action.TOOL,
             payload={"tool": "calculator", "args": {"expr": "2+2"}},
         )
-        text, style = format_step_result(result)
-        assert "calculator" in text
-        assert style == "class:tool"
+        _display_result(result)
+        captured = capsys.readouterr()
+        assert "calculator" in captured.out
 
-    def test_stop_action(self):
+    def test_stop_action(self, capsys):
         result = StepResult(action=Action.STOP, payload={})
-        text, style = format_step_result(result)
-        assert "stopped" in text.lower()
-        assert style == "class:info"
+        _display_result(result)
+        captured = capsys.readouterr()
+        assert "session ended" in captured.out
 
-    def test_blocked_result(self):
+    def test_blocked_result(self, capsys):
         result = StepResult(
             action=Action.TOOL,
             payload={"tool": "rm"},
             blocked=True,
             block_reason="unsafe operation",
         )
-        text, style = format_step_result(result)
-        assert "BLOCKED" in text
-        assert "unsafe operation" in text
-        assert style == "class:error"
+        _display_result(result)
+        captured = capsys.readouterr()
+        assert "BLOCKED" in captured.out
+        assert "unsafe operation" in captured.out
 
-    def test_reflect_action(self):
+    def test_reflect_action(self, capsys):
         result = StepResult(action=Action.REFLECT, payload={})
-        text, style = format_step_result(result)
-        assert "reflect" in text
-        assert style == "class:info"
+        _display_result(result)
+        captured = capsys.readouterr()
+        assert "reflect" in captured.out
 
-    def test_retrieve_more_action(self):
+    def test_retrieve_more_action(self, capsys):
         result = StepResult(action=Action.RETRIEVE_MORE, payload={})
-        text, style = format_step_result(result)
-        assert "retrieve_more" in text
-        assert style == "class:info"
+        _display_result(result)
+        captured = capsys.readouterr()
+        assert "retrieve_more" in captured.out
 
 
-# --- Unit tests: make_completer ---
+# --- Unit tests: _make_completer ---
 
 
 class TestMakeCompleter:
     def test_returns_word_completer(self):
         from prompt_toolkit.completion import WordCompleter
 
-        completer = make_completer()
+        completer = _make_completer()
         assert isinstance(completer, WordCompleter)
 
-    def test_includes_all_slash_commands(self):
-        completer = make_completer()
-        for cmd in SLASH_COMMANDS:
+    def test_includes_all_commands(self):
+        completer = _make_completer()
+        for cmd in COMMANDS:
             assert cmd in completer.words
 
+    def test_includes_exit_words(self):
+        completer = _make_completer()
+        assert "exit" in completer.words
+        assert "quit" in completer.words
 
-# --- Unit tests: slash commands ---
+
+# --- Unit tests: commands ---
 
 
-class TestSlashCommands:
+class TestCommands:
     def setup_method(self):
         self.repl = CovenantREPL(llm=False, max_steps=5)
 
-    @patch.object(CovenantREPL, "_print_styled")
-    def test_quit_returns_true(self, mock_print):
-        assert self.repl._handle_slash_command("/quit") is True
-        mock_print.assert_called_once()
-        assert "Goodbye" in mock_print.call_args[0][0]
+    def test_quit_returns_true(self):
+        assert self.repl._handle_command("/quit") is True
 
-    @patch.object(CovenantREPL, "_print_styled")
-    def test_help_shows_commands(self, mock_print):
-        assert self.repl._handle_slash_command("/help") is False
-        # Should print header + one line per command
-        assert mock_print.call_count >= len(SLASH_COMMANDS) + 1
+    def test_exit_returns_true(self):
+        assert self.repl._handle_command("/exit") is True
 
-    @patch.object(CovenantREPL, "_print_styled")
-    def test_clear_without_agent(self, mock_print):
-        assert self.repl._handle_slash_command("/clear") is False
-        assert "cleared" in mock_print.call_args[0][0].lower()
+    def test_bare_exit_returns_true(self):
+        assert self.repl._handle_command("exit") is True
 
-    @patch.object(CovenantREPL, "_print_styled")
-    def test_clear_with_agent(self, mock_print):
+    def test_bare_quit_returns_true(self):
+        assert self.repl._handle_command("quit") is True
+
+    def test_help_returns_false(self, capsys):
+        assert self.repl._handle_command("/help") is False
+        captured = capsys.readouterr()
+        assert "/help" in captured.out
+
+    def test_clear_without_agent(self, capsys):
+        assert self.repl._handle_command("/clear") is False
+        captured = capsys.readouterr()
+        assert "cleared" in captured.out.lower()
+
+    def test_clear_with_agent(self):
         self.repl._agent = AgentLoop()
         self.repl._agent.history.append(
             StepResult(action=Action.RESPOND, payload={"text": "hi"})
         )
-        assert self.repl._handle_slash_command("/clear") is False
+        assert self.repl._handle_command("/clear") is False
         assert len(self.repl._agent.history) == 0
 
-    @patch.object(CovenantREPL, "_print_styled")
-    def test_status_no_agent(self, mock_print):
-        assert self.repl._handle_slash_command("/status") is False
-        assert "No active agent" in mock_print.call_args[0][0]
+    def test_status_no_agent(self, capsys):
+        assert self.repl._handle_command("/status") is False
+        captured = capsys.readouterr()
+        assert "No active cortex" in captured.out
 
-    @patch.object(CovenantREPL, "_print_styled")
-    def test_status_with_agent(self, mock_print):
+    def test_status_with_agent(self, capsys):
         self.repl._agent = AgentLoop()
         self.repl._agent.wm.goal = "test goal"
         self.repl._agent.wm.budget = 5
-        assert self.repl._handle_slash_command("/status") is False
-        all_text = " ".join(call[0][0] for call in mock_print.call_args_list)
-        assert "test goal" in all_text
-        assert "5" in all_text
+        assert self.repl._handle_command("/status") is False
+        captured = capsys.readouterr()
+        assert "test goal" in captured.out
+        assert "5" in captured.out
 
-    @patch.object(CovenantREPL, "_print_styled")
-    def test_reset_clears_agent(self, mock_print):
+    def test_reset_clears_agent(self, capsys):
         self.repl._agent = AgentLoop()
-        assert self.repl._handle_slash_command("/reset") is False
+        assert self.repl._handle_command("/reset") is False
         assert self.repl._agent is None
-        assert "reset" in mock_print.call_args[0][0].lower()
+        captured = capsys.readouterr()
+        assert "reset" in captured.out.lower()
 
-    @patch.object(CovenantREPL, "_print_styled")
-    def test_unknown_command(self, mock_print):
-        assert self.repl._handle_slash_command("/foo") is False
-        assert "Unknown" in mock_print.call_args[0][0]
+    def test_unknown_command(self, capsys):
+        assert self.repl._handle_command("/foo") is False
+        captured = capsys.readouterr()
+        assert "unknown command" in captured.out.lower()
 
 
 # --- Integration: _run_agent_turn with rule-based agent ---
@@ -160,7 +169,6 @@ class TestRunAgentTurn:
         repl = CovenantREPL(llm=False, max_steps=5)
         results = await repl._run_agent_turn("hello")
         assert len(results) >= 1
-        # Rule-based agent with no LLM defaults to RESPOND
         last = results[-1]
         assert last.action in {Action.RESPOND, Action.ASK, Action.STOP}
 
