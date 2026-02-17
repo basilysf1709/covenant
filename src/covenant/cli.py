@@ -7,11 +7,20 @@ import click
 from covenant import __version__
 
 
-@click.group()
+@click.group(invoke_without_command=True)
 @click.version_option(version=__version__)
-def main():
+@click.option("--llm/--no-llm", default=False, help="Use LLM in REPL mode.")
+@click.option("--max-steps", default=10, help="Max agent steps per turn in REPL mode.")
+@click.pass_context
+def main(ctx, llm: bool, max_steps: int):
     """Covenant: Cloud Intelligence System."""
-    pass
+    ctx.ensure_object(dict)
+    ctx.obj["llm"] = llm
+    ctx.obj["max_steps"] = max_steps
+    if ctx.invoked_subcommand is None:
+        from covenant.repl import start_repl
+
+        start_repl(llm=llm, max_steps=max_steps)
 
 
 @main.command()
