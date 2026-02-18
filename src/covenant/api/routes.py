@@ -22,14 +22,16 @@ from covenant.memory.retrieval import MemoryRetriever
 router = APIRouter()
 
 
-def _make_agent(use_llm: bool = False) -> AgentLoop:
-    kwargs = {}
+def _make_agent(use_llm: bool = False, session=None) -> AgentLoop:
+    kwargs: dict = {}
     if use_llm:
         from covenant.config import get_settings
         from covenant.llm.client import get_llm_client
 
         settings = get_settings()
         kwargs["llm_client"] = get_llm_client(settings)
+    if session is not None:
+        kwargs["session"] = session
     return AgentLoop(**kwargs)
 
 
@@ -40,31 +42,35 @@ async def health():
 
 @router.post("/step", response_model=StepResponse)
 async def step(req: StepRequest):
-    agent = _make_agent(use_llm=req.use_llm)
-    result = await agent.step(req.user_input)
-    return StepResponse(
-        action=result.action.value,
-        payload=result.payload,
-        blocked=result.blocked,
-        block_reason=result.block_reason,
-    )
+    session_factory = get_session_factory()
+    async with session_factory() as session:
+        agent = _make_agent(use_llm=req.use_llm, session=session)
+        result = await agent.step(req.user_input)
+        return StepResponse(
+            action=result.action.value,
+            payload=result.payload,
+            blocked=result.blocked,
+            block_reason=result.block_reason,
+        )
 
 
 @router.post("/run", response_model=RunResponse)
 async def run(req: RunRequest):
-    agent = _make_agent(use_llm=req.use_llm)
-    results = await agent.run(req.goal, max_steps=req.max_steps)
-    return RunResponse(
-        steps=[
-            StepResponse(
-                action=r.action.value,
-                payload=r.payload,
-                blocked=r.blocked,
-                block_reason=r.block_reason,
-            )
-            for r in results
-        ]
-    )
+    session_factory = get_session_factory()
+    async with session_factory() as session:
+        agent = _make_agent(use_llm=req.use_llm, session=session)
+        results = await agent.run(req.goal, max_steps=req.max_steps)
+        return RunResponse(
+            steps=[
+                StepResponse(
+                    action=r.action.value,
+                    payload=r.payload,
+                    blocked=r.blocked,
+                    block_reason=r.block_reason,
+                )
+                for r in results
+            ]
+        )
 
 
 @router.get("/memory/search", response_model=MemorySearchResponse)

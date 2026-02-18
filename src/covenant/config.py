@@ -1,12 +1,17 @@
 """Configuration via pydantic-settings."""
 
+from pathlib import Path
+
 from pydantic_settings import BaseSettings
+
+_DEFAULT_DATA_DIR = Path.home() / ".covenant"
+_DEFAULT_DB_URL = f"sqlite+aiosqlite:///{_DEFAULT_DATA_DIR / 'covenant.db'}"
 
 
 class Settings(BaseSettings):
     model_config = {"env_prefix": "COVENANT_", "env_file": ".env"}
 
-    database_url: str = "sqlite+aiosqlite:///covenant.db"
+    database_url: str = _DEFAULT_DB_URL
     llm_provider: str = "openai"  # "openai" or "anthropic"
     llm_api_key: str = ""
     llm_model: str = "gpt-4o-mini"
@@ -18,4 +23,5 @@ class Settings(BaseSettings):
 
 
 def get_settings() -> Settings:
+    _DEFAULT_DATA_DIR.mkdir(parents=True, exist_ok=True)
     return Settings()

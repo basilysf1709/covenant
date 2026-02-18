@@ -1,5 +1,7 @@
 """Async database engine and session management."""
 
+from pathlib import Path
+
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
 from covenant.config import Settings
@@ -9,12 +11,22 @@ _engine = None
 _session_factory = None
 
 
+def _ensure_sqlite_dir(url: str) -> None:
+    """Create parent directory for a SQLite database file if needed."""
+    prefix = "sqlite+aiosqlite:///"
+    if not url.startswith(prefix):
+        return
+    db_path = Path(url[len(prefix):]).resolve()
+    db_path.parent.mkdir(parents=True, exist_ok=True)
+
+
 def get_engine(settings: Settings | None = None):
     global _engine
     if _engine is None:
         if settings is None:
             from covenant.config import get_settings
             settings = get_settings()
+        _ensure_sqlite_dir(settings.database_url)
         _engine = create_async_engine(settings.database_url, echo=False)
     return _engine
 

@@ -67,21 +67,23 @@ def _make_completer() -> WordCompleter:
 
 # ── Banner ────────────────────────────────────────────────────────────────────
 
-BANNER = """\
-[dim]  ┌──────────────────────────────────────────┐[/dim]
-[dim]  │[/dim] [cortex]  ◉◉◉[/cortex]   [bold bright_white]C O V E N A N T[/bold bright_white]   [cortex]◉◉◉[/cortex]  [dim]│[/dim]
-[dim]  │[/dim] [synapse]    ∿∿  neural  interface  ∿∿[/synapse]    [dim]│[/dim]
-[dim]  │[/dim] [dim]            v{version}[/dim]              [dim]│[/dim]
-[dim]  └──────────────────────────────────────────┘[/dim]"""
-
 HELP_TEXT = """\
 [dim]  Type naturally. Say [/dim][signal]exit[/signal][dim] or [/dim][signal]quit[/signal][dim] to disconnect.[/dim]
 [dim]  Press [/dim][signal]Ctrl+D[/signal][dim] or [/dim][signal]Ctrl+C[/signal][dim] also works.[/dim]"""
 
 
 def _print_banner() -> None:
+    content = Text(justify="center")
+    content.append("◉◉◉", style="bold magenta")
+    content.append("  C O V E N A N T  ", style="bold bright_white")
+    content.append("◉◉◉", style="bold magenta")
+    content.append("\n")
+    content.append("∿∿  neural  interface  ∿∿", style="cyan")
+    content.append("\n")
+    content.append(f"v{__version__}", style="dim")
+
     console.print()
-    console.print(BANNER.format(version=__version__))
+    console.print(Panel(content, border_style="dim", padding=(0, 2)))
     console.print(HELP_TEXT)
     console.print()
 
@@ -244,8 +246,12 @@ class CovenantREPL:
             settings = get_settings()
             await _init_db(settings)
             self._session_factory = get_session_factory()
-        except Exception:
+        except Exception as exc:
             self._session_factory = None
+            console.print(
+                f"  [err]⚠ memory init failed:[/err] [dim]{exc}[/dim]\n"
+                "  [dim]Running in volatile mode — memory will not persist.[/dim]"
+            )
 
     async def _create_agent(self) -> AgentLoop:
         loop_kwargs: dict[str, Any] = {}
