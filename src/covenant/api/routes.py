@@ -26,10 +26,11 @@ def _make_agent(use_llm: bool = False, session=None) -> AgentLoop:
     kwargs: dict = {}
     if use_llm:
         from covenant.config import get_settings
-        from covenant.llm.client import get_llm_client
+        from covenant.llm.client import get_embed_fn, get_llm_client
 
         settings = get_settings()
         kwargs["llm_client"] = get_llm_client(settings)
+        kwargs["embed_fn"] = get_embed_fn(settings)
     if session is not None:
         kwargs["session"] = session
     return AgentLoop(**kwargs)

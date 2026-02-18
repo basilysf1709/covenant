@@ -106,3 +106,27 @@ def get_llm_client(settings: Settings) -> LLMClient:
     if settings.llm_provider == "anthropic":
         return AnthropicClient(settings)
     return OpenAIClient(settings)
+
+
+def get_embed_fn(settings: Settings):
+    """Return an async embed callable using OpenAI, or None if no key is available.
+
+    Uses embedding_api_key if set, otherwise falls back to llm_api_key when
+    the provider is OpenAI. Returns None when no usable key exists.
+    """
+    api_key = settings.embedding_api_key or (
+        settings.llm_api_key if settings.llm_provider == "openai" else ""
+    )
+    if not api_key:
+        return None
+
+    from openai import AsyncOpenAI
+
+    client = AsyncOpenAI(api_key=api_key)
+    model = settings.embedding_model
+
+    async def _embed(text: str) -> list[float]:
+        resp = await client.embeddings.create(model=model, input=text)
+        return resp.data[0].embedding
+
+    return _embed

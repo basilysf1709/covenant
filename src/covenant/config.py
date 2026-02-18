@@ -17,6 +17,7 @@ class Settings(BaseSettings):
     llm_model: str = "gpt-4o-mini"
     embedding_model: str = "text-embedding-3-small"
     embedding_dim: int = 1536
+    embedding_api_key: str = ""  # separate OpenAI key for embeddings (Anthropic has no embed API)
     log_level: str = "INFO"
     api_host: str = "0.0.0.0"
     api_port: int = 8000

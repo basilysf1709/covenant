@@ -129,3 +129,32 @@ async def test_explicit_retriever_not_overridden(db_session):
     custom = CustomRetriever()
     agent = AgentLoop(session=db_session, retriever=custom)
     assert agent.retriever is custom
+
+
+async def test_embed_fn_stores_embeddings(db_session):
+    """When embed_fn is provided, episodes should be stored with embeddings."""
+
+    async def fake_embed(text: str) -> list[float]:
+        return [0.1, 0.2, 0.3]
+
+    agent = AgentLoop(session=db_session, embed_fn=fake_embed)
+    await agent.step("remember the sky is blue")
+
+    result = await db_session.execute(select(Episode))
+    episodes = result.scalars().all()
+    assert len(episodes) == 1
+    assert episodes[0].embedding is not None
+    import json
+    stored = json.loads(episodes[0].embedding)
+    assert stored == [0.1, 0.2, 0.3]
+
+
+async def test_embed_fn_wired_to_retriever(db_session):
+    """embed_fn should be passed through to the auto-wired MemoryRetriever."""
+
+    async def fake_embed(text: str) -> list[float]:
+        return [0.0] * 4
+
+    agent = AgentLoop(session=db_session, embed_fn=fake_embed)
+    assert agent.retriever is not None
+    assert agent.retriever.embed_fn is fake_embed

@@ -50,6 +50,7 @@ INPUT_STYLE = Style.from_dict(
 
 COMMANDS: dict[str, str] = {
     "/help": "Show available commands",
+    "/memories": "Summarize collected episodic memories",
     "/clear": "Clear conversation history",
     "/status": "Show cortex state",
     "/reset": "Reset neural pathways",
@@ -257,10 +258,11 @@ class CovenantREPL:
         loop_kwargs: dict[str, Any] = {}
         if self._llm:
             from covenant.config import get_settings
-            from covenant.llm.client import get_llm_client
+            from covenant.llm.client import get_embed_fn, get_llm_client
 
             settings = get_settings()
             loop_kwargs["llm_client"] = get_llm_client(settings)
+            loop_kwargs["embed_fn"] = get_embed_fn(settings)
 
         if self._session_factory is not None:
             self._db_session = self._session_factory()
@@ -273,6 +275,76 @@ class CovenantREPL:
         if self._db_session is not None:
             await self._db_session.__aexit__(None, None, None)
             self._db_session = None
+
+    async def _display_memories(self) -> None:
+        """Show a summary of stored episodic memories."""
+        if self._session_factory is None:
+            console.print("  [dim]No persistent memory available (volatile mode).[/dim]")
+            return
+
+        from collections import Counter
+
+        from sqlalchemy import func, select
+
+        from covenant.memory.models import Episode
+
+        async with self._session_factory() as session:
+            # Total count
+            total = (await session.execute(select(func.count(Episode.id)))).scalar() or 0
+            if total == 0:
+                console.print("  [dim]No episodic memories stored yet.[/dim]")
+                return
+
+            # Count with embeddings
+            embedded = (
+                await session.execute(
+                    select(func.count(Episode.id)).where(Episode.embedding.is_not(None))
+                )
+            ).scalar() or 0
+
+            # Recent episodes
+            recent = (
+                await session.execute(
+                    select(Episode).order_by(Episode.ts.desc()).limit(10)
+                )
+            ).scalars().all()
+
+            # Goal frequency across all episodes
+            all_goals = (
+                await session.execute(select(Episode.goal))
+            ).scalars().all()
+            goal_counts = Counter(g.strip() for g in all_goals if g and g.strip())
+            top_goals = goal_counts.most_common(5)
+
+        content = Text()
+        content.append(f"  ◉ Total episodes   ", style="status.key")
+        content.append(f"{total}\n", style="status.val")
+        content.append(f"  ◉ With embeddings  ", style="status.key")
+        content.append(f"{embedded}\n", style="status.val")
+
+        if top_goals:
+            content.append("\n")
+            content.append("  ◉ Top goals\n", style="status.key")
+            for goal, count in top_goals:
+                label = goal if len(goal) <= 60 else goal[:57] + "..."
+                content.append(f"    {count:>3}×  ", style="synapse")
+                content.append(f"{label}\n", style="status.val")
+
+        content.append("\n")
+        content.append("  ◉ Recent memories\n", style="status.key")
+        for ep in recent:
+            ts = ep.ts.strftime("%m/%d %H:%M") if ep.ts else "?"
+            emb_marker = "⬡" if ep.embedding else "○"
+            goal = ep.goal if len(ep.goal) <= 50 else ep.goal[:47] + "..."
+            outcome = ep.outcome if len(ep.outcome) <= 40 else ep.outcome[:37] + "..."
+            content.append(f"    {emb_marker} ", style="cortex")
+            content.append(f"[{ts}] ", style="dim")
+            content.append(f"{goal}", style="axon")
+            content.append(f" → {outcome}\n", style="dendrite")
+
+        console.print(
+            Panel(content, title="[cortex]episodic memory[/cortex]", border_style="magenta", padding=(0, 1))
+        )
 
     async def _handle_command(self, cmd: str) -> bool:
         """Handle a command. Returns True if the REPL should exit."""
@@ -290,6 +362,10 @@ class CovenantREPL:
             console.print(f"  [signal]{'exit':<10}[/signal] [dim]Disconnect[/dim]")
             console.print(f"  [signal]{'quit':<10}[/signal] [dim]Disconnect[/dim]")
             console.print()
+            return False
+
+        if cmd == "/memories":
+            await self._display_memories()
             return False
 
         if cmd == "/clear":

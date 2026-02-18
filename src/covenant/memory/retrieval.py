@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import json
+import math
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -9,6 +11,16 @@ from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from covenant.memory.models import Episode, Fact
+
+
+def _cosine_similarity(a: list[float], b: list[float]) -> float:
+    """Pure-Python cosine similarity between two vectors."""
+    dot = sum(x * y for x, y in zip(a, b))
+    norm_a = math.sqrt(sum(x * x for x in a))
+    norm_b = math.sqrt(sum(x * x for x in b))
+    if norm_a == 0 or norm_b == 0:
+        return 0.0
+    return dot / (norm_a * norm_b)
 
 
 @dataclass
@@ -46,7 +58,17 @@ class MemoryRetriever:
         return ranked[:limit]
 
     async def _vector_search(self, embedding: list[float], limit: int) -> list[RetrievalResult]:
-        """pgvector cosine similarity search. Only works with Postgres + pgvector."""
+        """Cosine similarity search. Uses pgvector on Postgres, in-process on SQLite."""
+        dialect = self._get_dialect()
+        if dialect == "postgresql":
+            return await self._vector_search_pgvector(embedding, limit)
+        return await self._vector_search_python(embedding, limit)
+
+    def _get_dialect(self) -> str:
+        bind = self.session.get_bind()
+        return bind.dialect.name
+
+    async def _vector_search_pgvector(self, embedding: list[float], limit: int) -> list[RetrievalResult]:
         try:
             stmt = text(
                 "SELECT id, goal, observation, action, outcome, salience, "
@@ -64,6 +86,35 @@ class MemoryRetriever:
                     metadata={"id": row.id, "salience": float(row.salience)},
                 )
                 for row in rows
+            ]
+        except Exception:
+            return []
+
+    async def _vector_search_python(self, embedding: list[float], limit: int) -> list[RetrievalResult]:
+        """In-process cosine similarity for SQLite (no pgvector)."""
+        try:
+            stmt = select(Episode).where(Episode.embedding.is_not(None))
+            result = await self.session.execute(stmt)
+            episodes = result.scalars().all()
+
+            scored: list[tuple[float, Episode]] = []
+            for ep in episodes:
+                try:
+                    stored = json.loads(ep.embedding)
+                except (json.JSONDecodeError, TypeError):
+                    continue
+                sim = _cosine_similarity(embedding, stored)
+                scored.append((sim, ep))
+
+            scored.sort(key=lambda t: t[0], reverse=True)
+            return [
+                RetrievalResult(
+                    source="episode",
+                    content=f"{ep.goal}: {ep.observation} -> {ep.action} -> {ep.outcome}",
+                    score=sim,
+                    metadata={"id": ep.id, "salience": ep.salience},
+                )
+                for sim, ep in scored[:limit]
             ]
         except Exception:
             return []

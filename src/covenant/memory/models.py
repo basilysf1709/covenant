@@ -23,7 +23,7 @@ class Episode(Base):
     outcome: Mapped[str] = mapped_column(Text, default="")
     salience: Mapped[float] = mapped_column(Float, default=0.5)
     tags: Mapped[dict | None] = mapped_column(JSON, nullable=True, default=None)
-    # embedding column added later via Alembic migration
+    embedding: Mapped[str | None] = mapped_column(Text, nullable=True, default=None)
 
     def __repr__(self) -> str:
         return f"<Episode(id={self.id}, goal={self.goal!r})>"

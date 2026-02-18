@@ -1,5 +1,6 @@
 """CRUD repository for memory models."""
 
+import json
 from datetime import datetime, timezone
 
 from sqlalchemy import select
@@ -30,16 +31,10 @@ class MemoryRepository:
 
     async def add_episode_with_embedding(self, embedding: list[float] | None = None, **kwargs) -> Episode:
         ep = Episode(**kwargs)
+        if embedding is not None:
+            ep.embedding = json.dumps(embedding)
         self.session.add(ep)
         await self.session.flush()
-        # Embedding stored via raw SQL when pgvector is available
-        if embedding is not None:
-            from sqlalchemy import text
-            await self.session.execute(
-                text("UPDATE episodes SET embedding = :emb WHERE id = :id"),
-                {"emb": str(embedding), "id": ep.id},
-            )
-            await self.session.flush()
         return ep
 
     async def delete_episode(self, episode_id: int) -> bool:

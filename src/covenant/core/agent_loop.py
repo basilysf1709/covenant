@@ -30,10 +30,12 @@ class AgentLoop:
         retriever: Any = None,
         tool_router: Any = None,
         session: AsyncSession | None = None,
+        embed_fn: Any = None,
     ):
         self.llm_client = llm_client
         self.session = session
         self.tool_router = tool_router
+        self.embed_fn = embed_fn  # async callable: str -> list[float]
         self.executive = executive or ExecutiveController(llm_client=llm_client)
         self.safety = safety or SafetyGate()
         self.wm = WorkingMemory()
@@ -45,7 +47,7 @@ class AgentLoop:
         elif session is not None:
             from covenant.memory.retrieval import MemoryRetriever
 
-            self.retriever = MemoryRetriever(session)
+            self.retriever = MemoryRetriever(session, embed_fn=embed_fn)
         else:
             self.retriever = None
 
@@ -144,11 +146,24 @@ class AgentLoop:
         from covenant.memory.repository import MemoryRepository
 
         repo = MemoryRepository(self.session)
-        await repo.add_episode(
+        episode_kwargs = dict(
             goal=goal,
             observation=observation,
             action=action,
             outcome=outcome,
             salience=0.5,
         )
+
+        embedding = None
+        if self.embed_fn is not None:
+            try:
+                content = f"{goal} {observation} {action} {outcome}"
+                embedding = await self.embed_fn(content)
+            except Exception:
+                pass
+
+        if embedding is not None:
+            await repo.add_episode_with_embedding(embedding=embedding, **episode_kwargs)
+        else:
+            await repo.add_episode(**episode_kwargs)
         await self.session.commit()
